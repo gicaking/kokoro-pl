@@ -1,0 +1,11 @@
+*.pth
+*.pt
+*.wav
+*.mp3
+*.parquet
+*.tar
+dane/
+kikiri-tts/
+__pycache__/
+*.pyc
+.env

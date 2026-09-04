@@ -1,0 +1,17 @@
+{
+  "id": "andrzejgicala/kokoro-pl-c-trening",
+  "title": "kokoro-pl-c-trening",
+  "code_file": "trening.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "keywords": [],
+  "dataset_sources": ["andrzejgicala/czytaj-kokoro-pl-konfig"],
+  "kernel_sources": ["andrzejgicala/kokoro-pl-a-wybor", "andrzejgicala/kokoro-pl-c-trening"],
+  "competition_sources": [],
+  "model_sources": []
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=Pilot treningu Kokoro PL na Lightning AI (wznawia po restartach/przerwaniach/zawieszeniach)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/andrzej-gicala/projects/czytaj
+EnvironmentFile=/home/andrzej-gicala/.lightning/czytaj.env
+ExecStart=/home/andrzej-gicala/projects/czytaj/venv/bin/python trening/lightning/pilot.py
+Restart=always
+RestartSec=120
+StandardOutput=append:/home/andrzej-gicala/projects/czytaj/trening/dane/pilot_lightning.log
+StandardError=append:/home/andrzej-gicala/projects/czytaj/trening/dane/pilot_lightning.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

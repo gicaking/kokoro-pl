@@ -1,0 +1,15 @@
+{
+  "id": "andrzejgicala/kokoro-pl-a-tar",
+  "title": "kokoro-pl-a-tar",
+  "code_file": "tar.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [],
+  "kernel_sources": ["andrzejgicala/kokoro-pl-a-wybor"],
+  "competition_sources": [],
+  "model_sources": []
+}
