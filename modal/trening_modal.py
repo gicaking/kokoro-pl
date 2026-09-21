@@ -17,13 +17,14 @@ import modal
 
 APP = "czytaj-kokoro-pl"
 GPU = os.environ.get("GPU", "L4")
+TORCH = os.environ.get("TORCH", "2.6.0")   # TORCH=2.8.0 -> inny cuDNN/CUDA (test na XID 31 w Stage 2)
 app = modal.App(APP)
 vol = modal.Volume.from_name(APP, create_if_missing=True)
 
 obraz = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git", "espeak-ng", "ffmpeg", "libsndfile1", "build-essential")
-    .pip_install("torch==2.6.0", "torchaudio==2.6.0", "numpy<2")   # transformers: torch.load wymaga >=2.6 (WavLM .bin)
+    .pip_install(f"torch=={TORCH}", f"torchaudio=={TORCH}", "numpy<2")   # transformers: torch.load wymaga >=2.6 (WavLM .bin)
     .pip_install("munch", "librosa", "nltk", "einops", "einops-exts", "accelerate", "transformers",
                  "pyyaml", "soundfile", "pydub", "click", "tqdm", "matplotlib", "tensorboard", "pandas", "scipy")
     .pip_install("git+https://github.com/resemble-ai/monotonic_align.git")
@@ -115,7 +116,7 @@ def _ostatni(*katalogi, wzor="epoch_1st*.pth"):
 
 @app.function(image=obraz, gpu=GPU, volumes={VOL: vol}, timeout=24 * 3600, cpu=4, memory=16384)   # CPU/RAM licza sie osobno (~$0,13/rdzen-h, ~$0,024/GiB-h)
 def trenuj(etap: int = 1, godziny: float = 6.0, epoki: int = 6, batch: int = 3, max_len: int = 200,
-           lektor: str = "wiktor_korzeniewski"):
+           lektor: str = "wiktor_korzeniewski", debug: int = 0):
     import glob, os, shutil, subprocess, threading, time, yaml
     from pathlib import Path
     t0 = time.time()
@@ -132,6 +133,38 @@ def trenuj(etap: int = 1, godziny: float = 6.0, epoki: int = 6, batch: int = 3, 
     subprocess.run(f"cd {ST2} && python -c \"from kokoro_symbols import symbols, dicts; assert len(symbols)==178; "
                    f"assert dicts['ʦ']==20 and dicts['ʒ']==147; print('symbole OK')\"", shell=True, check=True)
     _patch_zapis_krokowy(ST2)
+    # kikiri train_second.py ma torch.autograd.set_detect_anomaly(True) - zapis stosu Pythona przy KAZDEJ operacji
+    # (py-spy: traceback.extract_stack w WavLM); 2026-09-05 wznowiony Stage 2 stal 35 min bez kroku. Wylaczamy.
+    ts2 = ST2 / "train_second.py"; t2 = ts2.read_text()
+    if "set_detect_anomaly(True)" in t2:
+        ts2.write_text(t2.replace("set_detect_anomaly(True)", "set_detect_anomaly(False)")); print("[patch] detect_anomaly wylaczone", flush=True)
+    # 2026-09-05: Stage 2 w fazie joint pada na L4 'CUDA illegal memory access' / XID 31 MMU fault w loss_gen_lm.backward()
+    # (WavLM w SLM adv, torch 2.6). Kernele flash/mem-efficient SDPA + cudnn.benchmark -> wylaczamy (math SDPA, heurystyki cuDNN).
+    t2 = ts2.read_text()
+    if "enable_flash_sdp(False)" not in t2:
+        t2 = t2.replace("torch.autograd.set_detect_anomaly(False)",
+                        "torch.autograd.set_detect_anomaly(False)\n"
+                        "torch.backends.cuda.enable_flash_sdp(False)\n"
+                        "torch.backends.cuda.enable_mem_efficient_sdp(False)\n"
+                        "torch.backends.cudnn.benchmark = False\n", 1)
+        ts2.write_text(t2); print("[patch] flash/mem-efficient SDPA i cudnn.benchmark wylaczone", flush=True)
+    # StyleTTS2 zapisuje po epoce {"epoch": epoch} i przy wznowieniu startuje od start_epoch = epoch,
+    # czyli POWTARZA zrobiona epoke (2026-09-05: epoch_1st_00003.pth z epoch=2 -> Modal liczyl "Epoch [3/6]"
+    # od nowa). Pelny checkpoint epokowy -> +1; krokowy (epoka niedokonczona) -> bez zmiany.
+    mp = ST2 / "models.py"; ms = mp.read_text()
+    kot_m = '        epoch = state["epoch"]\n        iters = state["iters"]'
+    if "_step_" not in ms:
+        assert kot_m in ms, "kotwica load_checkpoint w models.py nie pasuje"
+        mp.write_text(ms.replace(kot_m, '        epoch = state["epoch"] + (0 if "_step_" in str(path) else 1)\n        iters = state["iters"]'))
+    # checkpointy zapisane spod MyDataParallel maja klucze 'module.X'; load_checkpoint laduje do NIEopakowanego
+    # modelu ze strict=False -> po cichu NIC nie wczytuje (2026-09-05: "wznowiony" Stage 2 = losowe wagi, Loss 0,88).
+    ms = mp.read_text()
+    if "module." not in ms:
+        kot_p = '    params = state["net"]\n'
+        assert kot_p in ms, "kotwica params w load_checkpoint nie pasuje"
+        ms = ms.replace(kot_p, kot_p + '    params = {m: {(k[7:] if k.startswith("module.") else k): v for k, v in sd.items()} for m, sd in params.items()}\n', 1)
+        mp.write_text(ms); print("[patch] load_checkpoint: zdejmowanie prefiksu module.", flush=True)
+    subprocess.run(f"cd {ST2} && grep -n 'def load_checkpoint' models.py", shell=True)
 
     cfg = yaml.safe_load((REPO / "configs" / "config_german_ft.yml").read_text())
     if etap == 1:
@@ -140,15 +173,35 @@ def trenuj(etap: int = 1, godziny: float = 6.0, epoki: int = 6, batch: int = 3, 
         pretrained, tylko_wagi = (wzn or str(KONF / "kokoro_base.pth")), wzn is None
     else:
         lista = DANE / f"stage2_{lektor}"
+        # slmadv (Modules/slmadv.py) zbiera batch_percentage*batch probek i wymaga >1 (`if len(sp) <= 1: return None`);
+        # przy batch 2 * 0.5 = 1 -> None w KAZDYM kroku -> `continue` omija SLM adv i logowanie, style_encoder/decoder
+        # ucza sie bez regularyzatora (2026-09-05: val loss 0,44 -> 0,875 w jedna epoke). Minimum: batch 3.
+        assert batch >= 3, "Stage 2 wymaga batch >= 3 (slmadv potrzebuje >= 2 probek)"
         assert (lista / "train_list.txt").exists(), f"brak list etapu 2: {lista}"
         baza = _ostatni(BAZA / "logs" / "stage1", KONF, wzor="epoch_1st_0*.pth") or _ostatni(BAZA / "logs" / "stage1", KONF)
         assert baza, "Stage 2 wymaga checkpointu Stage 1 (logs/stage1 albo konfig)"
         shutil.copy(baza, LOGS / "first_stage.pth"); print("Stage 2 z bazy:", baza, flush=True)
-        pretrained, tylko_wagi = str(KONF / "kokoro_base.pth"), True
+        wzn2 = _ostatni(LOGS, wzor="epoch_2nd_*.pth")
+        if wzn2:
+            # wznowienie Stage 2 sciezka load_pretrained (second_stage_load_pretrained=True); train_second po
+            # zaladowaniu robi predictor_encoder = deepcopy(style_encoder), co skasowaloby wytrenowany
+            # predictor_encoder - wylaczamy to, gdy wznawiamy z epoch_2nd_*
+            ts = ST2 / "train_second.py"; t = ts.read_text()
+            kot_t = "        model.predictor_encoder = copy.deepcopy(model.style_encoder)"
+            if '"epoch_2nd" not in str(config' not in t:   # "epoch_2nd" samo jest w nazwie pliku zapisu - patch sie nie stosowal
+                assert t.count(kot_t) == 2, "kotwica predictor_encoder w train_second.py nie pasuje"
+                i = t.rfind(kot_t)   # drugie wystapienie = galaz load_pretrained
+                t = t[:i] + '        if "epoch_2nd" not in str(config["pretrained_model"]):\n    ' + t[i:]
+                ts.write_text(t)
+            pretrained, tylko_wagi = wzn2, False
+            cfg["second_stage_load_pretrained"] = True
+            print("Stage 2 WZNOWIENIE z:", wzn2, flush=True)
+        else:
+            pretrained, tylko_wagi = str(KONF / "kokoro_base.pth"), True
         cfg["joint_epoch"] = 3; cfg.setdefault("loss_params", {})["lambda_slm"] = 1.0
     cfg.update({"batch_size": batch, "epochs_1st": epoki, "epochs_2nd": epoki, "save_freq": 1, "max_len": max_len,
                 "log_dir": str(LOGS), "device": "cuda", "pretrained_model": pretrained, "load_only_params": tylko_wagi,
-                "first_stage_path": "first_stage.pth", "second_stage_load_pretrained": False})
+                "first_stage_path": "first_stage.pth", "second_stage_load_pretrained": cfg.get("second_stage_load_pretrained", False)})
     cfg["data_params"].update({"train_data": str(lista / "train_list.txt"), "val_data": str(lista / "val_list.txt"),
                                "root_path": str(DANE), "OOD_data": str(DANE / "OOD_texts.txt"), "min_length": 50, "num_workers": 4})
     cfg["model_params"]["multispeaker"] = etap == 1
@@ -166,7 +219,11 @@ def trenuj(etap: int = 1, godziny: float = 6.0, epoki: int = 6, batch: int = 3, 
 
     skrypt = "train_first.py" if etap == 1 else "train_second.py"
     budzet = int(godziny * 3600 - (time.time() - t0))
-    cmd = (f"cd {ST2} && PYTORCH_ALLOC_CONF=expandable_segments:True PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "
+    # etap 2 (joint/SLM adv) padl 2026-09-05 na 'CUDA illegal memory access' w loss_gen_lm.backward() z expandable_segments
+    alok = "PYTORCH_ALLOC_CONF=expandable_segments:True PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True " if etap == 1 else ""
+    if debug:  # synchroniczne kernele -> prawdziwy stos bledu CUDA (wolne, tylko do diagnozy)
+        alok += "CUDA_LAUNCH_BLOCKING=1 "
+    cmd = (f"cd {ST2} && PYTHONUNBUFFERED=1 {alok}"   # stdout kontenera to pipe - bez UNBUFFERED logi kroków nie wychodzą
            f"timeout {budzet} accelerate launch --num_processes 1 --mixed_precision no {skrypt} --config_path {cfg_path}")
     print("$", cmd, flush=True)
     r = subprocess.run(cmd, shell=True)
@@ -181,7 +238,33 @@ def trenuj(etap: int = 1, godziny: float = 6.0, epoki: int = 6, batch: int = 3, 
             "checkpointy": sorted(p.name for p in LOGS.glob("*.pth"))}
 
 
+@app.function(image=obraz, volumes={VOL: vol}, timeout=2 * 3600, cpu=4, memory=16384)
+def ekstrakcja(lektor: str = "wiktor_korzeniewski", model2: str = "", model1: str = "", probek: int = 200):
+    """Voicepack .pt (kikiri scripts/extract_voicepack.py) na CPU: predictor_encoder z checkpointu Stage 2,
+    style_encoder ze Stage 1 (zalecenie kikiri) + wariant z obu polowami ze Stage 2. Wynik w /vol/voices/."""
+    import subprocess, shutil
+    from pathlib import Path
+    BAZA = Path(VOL); REPO = Path("/opt/kikiri-tts"); ST2 = REPO / "StyleTTS2"
+    shutil.copy(BAZA / "konfig" / "kokoro_symbols.py", ST2 / "kokoro_symbols.py")
+    m2 = model2 or _ostatni(BAZA / "logs" / f"stage2_{lektor}", wzor="epoch_2nd_*.pth")
+    m1 = model1 or _ostatni(BAZA / "logs" / "stage1", wzor="epoch_1st_0*.pth")
+    assert m2 and m1, f"brak checkpointow: stage2={m2} stage1={m1}"
+    out = BAZA / "voices"; out.mkdir(exist_ok=True)
+    audio = BAZA / "dane" / "audio" / lektor
+    wyniki = []
+    for nazwa, extra in ((f"{lektor}_s1style", ["--style-encoder-model", str(m1)]), (f"{lektor}_s2both", [])):
+        cel = out / f"{nazwa}.pt"
+        cmd = ["python", "scripts/extract_voicepack.py", "--model", str(m2), "--audio-dir", str(audio), "--output", str(cel),
+               "--num-samples", str(probek), "--device", "cpu"] + extra
+        print("$", " ".join(cmd), flush=True)
+        r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+        print(r.stdout[-2000:], r.stderr[-1500:], flush=True)
+        wyniki.append((cel.name, cel.exists(), r.returncode))
+    vol.commit()
+    return {"stage2": str(m2), "stage1": str(m1), "voicepacki": wyniki}
+
+
 @app.local_entrypoint()
 def main(etap: int = 1, godziny: float = 6.0, epoki: int = 6, batch: int = 3, max_len: int = 200,
-         lektor: str = "wiktor_korzeniewski"):
-    print(trenuj.remote(etap=etap, godziny=godziny, epoki=epoki, batch=batch, max_len=max_len, lektor=lektor))
+         lektor: str = "wiktor_korzeniewski", debug: int = 0):
+    print(trenuj.remote(etap=etap, godziny=godziny, epoki=epoki, batch=batch, max_len=max_len, lektor=lektor, debug=debug))
