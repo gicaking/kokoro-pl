@@ -14,5 +14,5 @@ while true; do
   case "$s" in *COMPLETE*|*ERROR*|*CANCEL*) break;; esac
   sleep 180
 done
-rm -rf dane/C_bieg1 && mkdir -p dane/C_bieg1 && $K kernels output andrzejgicala/kokoro-pl-c-trening -p dane/C_bieg1 2>&1 | tail -3
-echo "KONIEC: $s"; find dane/C_bieg1 -type f | grep -v kikiri | head -12
+W=dane/${WYJSCIE:-C_bieg1}; rm -rf $W && mkdir -p $W && $K kernels output andrzejgicala/kokoro-pl-c-trening -p $W 2>&1 | tail -3
+echo "KONIEC: $s"; find $W -type f | grep -v kikiri | head -12

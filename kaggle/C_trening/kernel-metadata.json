@@ -12,12 +12,10 @@
   "keywords": [],
   "dataset_sources": [
     "andrzejgicala/czytaj-kokoro-pl-konfig",
-    "andrzejgicala/czytaj-kokoro-pl-stage2"
+    "andrzejgicala/czytaj-kokoro-pl-stage2",
+    "andrzejgicala/czytaj-kokoro-pl-dane-jan-staszczyk"
   ],
-  "kernel_sources": [
-    "andrzejgicala/kokoro-pl-a-wybor",
-    "andrzejgicala/kokoro-pl-c-trening"
-  ],
+  "kernel_sources": [],
   "competition_sources": [],
   "model_sources": []
 }

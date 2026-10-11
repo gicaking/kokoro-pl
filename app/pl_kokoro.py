@@ -57,10 +57,25 @@ class PolishG2P:
         self.backend = EspeakG2P(language="pl")
 
     def __call__(self, text):
-        ps, tokens = self.backend(text)
+        if os.environ.get("KOKORO_ANGLICYZMY", "1") != "0":
+            from anglicyzmy import segmenty
+            seg = segmenty(text)
+            if any(j == "en" for _, j in seg):
+                # cale angielskie zdania/cytaty: angielskie fonemy, ten sam glos (patrz anglicyzmy.segmenty)
+                if not hasattr(self, "en"):
+                    self.en = EspeakG2P(language="en-us")
+                ps = " ".join(p for p in (self.en(f)[0].strip() if j == "en" else self._pl(f) for f, j in seg) if p)
+                return ps, None
+        return self._pl(text), None
+
+    def _pl(self, text):
+        if os.environ.get("KOKORO_ANGLICYZMY", "1") != "0":
+            from anglicyzmy import przepisz
+            text = przepisz(text)        # "software" -> "softłer" PRZED espeakiem (patrz anglicyzmy.py)
+        ps, _ = self.backend(text)
         for stare, nowe in MAPA:
             ps = ps.replace(stare, nowe)
-        return ps, tokens
+        return ps.strip()
 
 
 def zarejestruj():

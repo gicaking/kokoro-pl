@@ -18,11 +18,18 @@ from pathlib import Path
 # val loss 0,91 zamiast 0,418, 5,4 h stracone. v13 (2026-09-20): poprawki NAPRAWDE w poprawki_kikiri() ponizej,
 # straznik zawieszen (v12 stal 1,9 h bez kroku), wznowienie z epoch_2nd_00009 z datasetu stage2 (Modal, val 0,418);
 # wyjscie v12 (e9-e11, zle) wyrzucone z kernel_sources.
+# v15 (2026-09-27): trzeci lektor Stage 2 = Jan Peszek (Andrzej wybral); dane z osobnego kernela A
+# (kernel kokoro-pl-a-jan-peszek zawisl 10 h z pustym logiem -> wybor.py policzony lokalnie, dataset
+# czytaj-kokoro-pl-dane-jan-peszek), od zera z bazy Stage 1 e4 jak Korzeniewski i Pankowska.
+# v16 (2026-10-02): czwarty lektor Stage 2 = Joanna Domanska (Andrzej wybral 30.09); A policzony lokalnie,
+# dataset czytaj-kokoro-pl-dane-joanna-domanska, ten sam przepis co Peszek (od Stage 1 e4, 10 epok, batch 3).
+# v17 (2026-10-09): piaty lektor Stage 2 = Jan Staszczyk (Andrzej wybral 3.10; Lightning bez kredytow), A lokalnie,
+# dataset czytaj-kokoro-pl-dane-jan-staszczyk.
 ETAP = int(os.environ.get("ETAP", "2"))            # 1 = baza wielolektorowa, 2 = jeden lektor
-LEKTOR = os.environ.get("LEKTOR", "wiktor_korzeniewski")
-GODZINY_BUDZET = float(os.environ.get("GODZINY_BUDZET", "5.4"))   # kwota 6 h/tydz. (T4 Stage 2: 30 min/epoka)
+LEKTOR = os.environ.get("LEKTOR", "jan_staszczyk")
+GODZINY_BUDZET = float(os.environ.get("GODZINY_BUDZET", "5.2"))   # kwota 6 h/tydz. (T4 Stage 2: 30 min/epoka)
 BATCH = int(os.environ.get("BATCH", "3"))          # Stage 2: slmadv wymaga >=2 probek (batch_percentage 0.5 -> batch >= 3); T4 15 GB
-EPOKI = int(os.environ.get("EPOKI", "20"))         # epochs_2nd LACZNIE (wznowienie od 10 -> 10 nowych; budzet i tak utnie)
+EPOKI = int(os.environ.get("EPOKI", "10"))         # epochs_2nd LACZNIE (Pankowska: plateau ~e9 z 10; budzet i tak utnie)
 MAX_LEN = int(os.environ.get("MAX_LEN", "160"))     # ramki mel; batch 3 x 160 zamiast 2 x 200 (Stage 2 joint = WavLM + dyskryminatory)
 
 def znajdz(znacznik, opis):
@@ -38,7 +45,8 @@ def znajdz(znacznik, opis):
 
 for k in sorted(Path("/kaggle/input").glob("*")):
     print("[input]", k, "->", [x.name for x in list(k.iterdir())[:8]], flush=True)
-DANE = znajdz("stage1/train_list.txt", "dane (etap A)")
+# Stage 2: dane lektora moga byc w osobnym kernelu A (A_lektor) - szukamy po jego liscie, nie po stage1
+DANE = znajdz(f"stage2_{LEKTOR}/train_list.txt" if ETAP == 2 else "stage1/train_list.txt", "dane (etap A)")
 DANE = DANE.parent if DANE else Path("/kaggle/input/kokoro-pl-a-wybor")
 KONF = znajdz("kokoro_symbols.py", "konfig") or Path("/kaggle/input/czytaj-kokoro-pl-konfig")
 POPRZEDNI = (znajdz("bieg.json", "poprzedni bieg C") or Path("/kaggle/input/kokoro-pl-c-trening/logs")).parent

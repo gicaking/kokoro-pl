@@ -53,11 +53,13 @@ from huggingface_hub import hf_hub_download, list_repo_files
 from pl_g2p import PolishG2P
 from kokoro_symbols import dicts as VOCAB
 
-wyb = json.load(open(KONF / "wybor.json", encoding="utf-8"))
+# WYBOR: inny plik wyboru (kernel A_lektor wstawia go na poczatek skryptu - np. dogenerowanie jednego lektora Stage 2)
+wyb = json.load(open(os.environ.get("WYBOR") or KONF / "wybor.json", encoding="utf-8"))
 lektorzy = wyb["lektorzy"]                                   # slug -> {nazwa, audiobooki, limit_s, etapy}
 po_audiobooku = {ab: sl for sl, l in lektorzy.items() for ab in l["audiobooki"]}
 ood_ab = set(wyb.get("ood_audiobooki", []))
 zebrane = {sl: 0.0 for sl in lektorzy}
+na_ab = {}                                                   # sekundy per audiobook (limit_ab_s: roznorodnosc zamiast jednej ksiazki)
 meta, ood_teksty = [], []
 t0 = time.time()
 
@@ -67,6 +69,8 @@ def gotowe():
 
 
 shards = sorted(f for f in list_repo_files(REPO, repo_type="dataset") if f.endswith("-of-00381.parquet"))
+if wyb.get("shardy"):                                        # znane z wiersze.parquet - nie ciagniemy 381 shardow po 433 MB
+    shards = [f for f in shards if f.split("/")[-1] in set(wyb["shardy"])]
 print(f"shardow: {len(shards)}; lektorow: {len(lektorzy)}; audiobookow: {len(po_audiobooku)}", flush=True)
 for n, f in enumerate(shards[:MAX_SHARDOW]):
     if gotowe():
@@ -84,6 +88,8 @@ for n, f in enumerate(shards[:MAX_SHARDOW]):
             sl = po_audiobooku[r.speaker_id]
             if zebrane[sl] >= lektorzy[sl]["limit_s"]:
                 continue
+            if na_ab.get(r.speaker_id, 0) >= lektorzy[sl].get("limit_ab_s", 1e9):
+                continue
             if re.search(r"\d", r.text):
                 continue
             a, sr = sf.read(io.BytesIO(r.mp3["bytes"]), dtype="float32")
@@ -96,6 +102,7 @@ for n, f in enumerate(shards[:MAX_SHARDOW]):
             sf.write(plik, (np.clip(a, -1, 1) * 32767).astype(np.int16), sr, subtype="PCM_16")
             meta.append({"plik": f"audio/{sl}/{plik.name}", "tekst": r.text, "lektor": sl, "plec": r.gender, "sekundy": round(sek, 2)})
             zebrane[sl] += sek
+            na_ab[r.speaker_id] = na_ab.get(r.speaker_id, 0) + sek
     os.remove(p); shutil.rmtree(TMP, ignore_errors=True); TMP.mkdir(parents=True, exist_ok=True)
     if n % 10 == 0:
         print(f"shard {n}/{len(shards)} | {round(time.time() - t0)} s | " + ", ".join(f"{s}:{zebrane[s]/3600:.1f}h" for s in zebrane) + f" | ood {len(ood_teksty)}", flush=True)
