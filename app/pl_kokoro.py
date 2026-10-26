@@ -33,6 +33,10 @@ KOD = "l"  # 'p' zajete przez pt-br, 'pl' musi byc jednoliterowe
 #   z "zi" jest w polskim duzo wiecej niz z "z". Dla zf_xiaoxiao lepsze byloby ʒ (4 vs 1).
 ZAMIENNIK_Z = os.environ.get("KOKORO_Z", "ʒʲ")
 
+# "trz"/"drz": espeak daje dwa znaki t+ʃ / d+ʒ, a "cz"/"dz" jako gotowe ligatury ʧ/ʤ. Stara MAPA sklejala
+# tʃ -> ʧ, wiec "trzy" czytalo sie "czy", "wietrze" "wiecze" (Whisper 17.10 i 26.10). KOKORO_TRZ=0 = stare sklejanie.
+SKLEJ_TRZ = os.environ.get("KOKORO_TRZ", "1") == "0"
+
 
 # Fonemy espeaka -> fonemy w slowniku Kokoro. Kolejnosc ma znaczenie:
 # najpierw dwuznaki (afrykaty), potem pojedyncze znaki.
@@ -40,8 +44,7 @@ MAPA = [
     # afrykaty palatalne: espeak daje dwa znaki, vocab ma gotowe zlepki
     ("dʑ", "ʥ"),   # dʑ -> ʥ   (dz w "dzien")
     ("tɕ", "ʨ"),   # tɕ -> ʨ   (c  w "cma")
-    ("dʒ", "ʤ"),   # dʒ -> ʤ   (dz w "dzem")
-    ("tʃ", "ʧ"),   # tʃ -> ʧ   (cz)
+    *([("dʒ", "ʤ"), ("tʃ", "ʧ")] if SKLEJ_TRZ else []),   # cz/dż espeak daje juz jako ʧ/ʤ; tu bylyby tylko trz/drz
     ("dz", "ʣ"),   # dz -> ʣ
     ("ts", "ʦ"),   # ts -> ʦ   (c)
     # jedyny fonem naprawde nieobecny w vocab: ʑ (polskie "z")

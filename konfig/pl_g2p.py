@@ -8,7 +8,9 @@ kompromis, tylko konwencja.
 from misaki.espeak import EspeakG2P
 
 MAPA = [
-    ("dʑ", "ʥ"), ("tɕ", "ʨ"), ("dʒ", "ʤ"), ("tʃ", "ʧ"), ("dz", "ʣ"), ("ts", "ʦ"),
+    # bez ("dʒ","ʤ") i ("tʃ","ʧ"): cz/dż espeak daje juz jako ʧ/ʤ, a sklejanie zamienialo trz w cz (26.10, pl_kokoro.SKLEJ_TRZ).
+    # Dane do v19 wlacznie byly fonemizowane ze sklejaniem.
+    ("dʑ", "ʥ"), ("tɕ", "ʨ"), ("dz", "ʣ"), ("ts", "ʦ"),
     ("ʑ", "ʒʲ"),
 ]
 

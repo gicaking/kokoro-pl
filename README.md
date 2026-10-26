@@ -88,6 +88,7 @@ Free quotas used: Kaggle 6 GPU-h/week (T4), Lightning 22 credits, Modal $30/mont
 6. Weight-norm key format differs between the training code (`parametrizations.weight.original0/1`) and the `kokoro` pip package (`module.X.weight_g/weight_v`): loading raw checkpoints into `KModel` produces noise with no error. Converter: `probka_z_checkpointu.py`.
 7. **RAM leak on Kaggle**: the main `train_second.py` process grows ~15 MB/step (2.4 GB per 10 min); 32 GB is gone after ~1700 steps and the run is OOM-killed or thrashes in the 4th epoch of the session. Not reproduced on Modal (torch 2.6, Python 3.11, 16 GB limit, 10 epochs fine). Workaround in `trening.py`: a fresh process every 3 epochs, resuming from the last checkpoint (`trenuj_kawalkami`). A resource log every 10 min (`zasoby.log`) is what found it.
 8. StyleTTS2 under DDP on 2×T4 desyncs collectives (NCCL timeout, `mt19937` state): single GPU only.
+9. **"trz" read as "cz"**: espeak-ng gives Polish "cz" as the ligature `ʧ` but "trz" as two symbols `t`+`ʃ` (same for `ʤ` vs `d`+`ʒ`). The phoneme map merged `tʃ` → `ʧ`, so "trzy" (three) became "czy". Fixed in `app/pl_kokoro.py` and `konfig/pl_g2p.py` (`KOKORO_TRZ=0` restores the old merge). Models trained on merged labels still read `t`+`ʃ` correctly: WER on 25 hard sentences 8.0 → 6.2 % and 8.0 → 5.6 % for two voices, "cz"/"dż" control sentences unchanged.
 
 ## Plan
 
@@ -112,6 +113,8 @@ Free quotas used: Kaggle 6 GPU-h/week (T4), Lightning 22 credits, Modal $30/mont
 - **2026-10-05**: symbol cleanup for LLM-written text (`app/symbole.py`).
 - **2026-10-09**: Jan Staszczyk (Kaggle v17, e8, val 0.405, best so far).
 - **2026-10-10**: whole English sentences read with English phonemes by the same Polish voice.
+- **2026-10-12**: about 8 % of WolneLektury-TTS-Polish clips are truncated (audio cut, full text); filter: drop clips above 19 chars/s.
+- **2026-10-26**: Staszczyk on 12 h of filtered audio (Kaggle v18/v19), best e12 (val 0.397). Phoneme map fix for "trz"/"drz" (trap 9).
 
 ## Credits
 
